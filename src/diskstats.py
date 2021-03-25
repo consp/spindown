@@ -165,6 +165,10 @@ class Disk:
         data = subprocess.run(['smartctl', '-n', 'standby', '-i', '/dev/%s' % self.name], stdout=subprocess.PIPE).stdout.decode()
         if 'Device is in ' in data:
             self.status = data.split("Device is in ")[1].split(" mode")[0]
+        elif "Power mode is" in data:
+            self.status = data.split("Power mode is:")[1].strip()
+        else:
+            self.status = "UNKNOWN"
         return self.status
 
     def standby(self, timeout=timedelta(minutes=25)):
@@ -177,6 +181,7 @@ class Disk:
             return "Timer triggered but disk already in standby mode"
         elif "STANDBY" in self.status:
             return "Disk in standby but timer not triggered"
+        return "Disk in %s mode" % (self.status)
 
 
 
