@@ -67,10 +67,10 @@ class Diskstats:
         for name, disk in self.disks.items():
             disk.powerstatus()
 
-    def set_standby(self, timeout=timedelta(minutes=25)):
+    def set_standby(self, standby_timeout=timedelta(minutes=25)):
         s = "Setting disks in standby:\n"
         for name, disk in self.disks.items():
-            r = disk.standby(timeout=timeout)
+            r = disk.standby(standby_timeout=standby_timeout)
             s = s + "%-4s " % (name) + r + "\n"
         return s
 
@@ -110,6 +110,8 @@ class Disk:
 
     time_last_check = 0
     status = "UNKNOWN"
+    sata = False
+    sas = False
 
     def __init__(self, name, timestamp=None, current_reads_completed=0, current_writes_completed=0):  # noqa
         # name is the drivename, data is the raw input from diskstats
@@ -118,6 +120,9 @@ class Disk:
         self.current_reads_completed = current_reads_completed
         self.current_writes_completed = current_writes_completed
         self.name = name
+        self.sas = False
+        self.sata = False
+        self.check_protocol()
         self.update()
 
     def update(self):
@@ -144,6 +149,15 @@ class Disk:
     def idle(self):
         return datetime.utcnow() - self.time_last_check
 
+    def check_protocol(self):
+        data = subprocess.run(['smartctl', '-i', '/dev/%s' % self.name], stdout=subprocess.PIPE).stdout
+        if b"Transport protocol" in data:
+            self.sata = False
+            self.sas = True
+        else:
+            self.sata = True
+            self.sas = False
+
     def __lt__(self, other):
         return self.time_last_check < other.time_last_check
 
@@ -167,20 +181,36 @@ class Disk:
             self.status = data.split("Device is in ")[1].split(" mode")[0]
         elif "Power mode is" in data:
             self.status = data.split("Power mode is:")[1].strip()
+        elif "Power mode was" in data:
+            self.status = data.split("Power mode was:")[1].strip()
         else:
             self.status = "UNKNOWN"
         return self.status
 
-    def standby(self, timeout=timedelta(minutes=25)):
+    def standby(self, standby_timeout=timedelta(minutes=25), idle_c_timeout=timedelta(minutes=8), idle_b_timeout=timedelta(minutes=3), idle_a_timeout=timedelta(seconds=10)):
         # sas is STANDBY xxxxxxxxxx (by command/timer)
         # sata is STANDBY
-        if self.idle() > timeout and "STANDBY" not in self.status:
+        # IDLE_b can be use to force, idle usually works. Idle_c == standby_y in my case
+        if self.idle() > standby_timeout and "STANDBY" not in self.status:
             data = subprocess.run(['smartctl', '-s', 'standby,now', '/dev/%s' % self.name], stdout=subprocess.PIPE).stdout
-            return "Standby issued"
-        elif "STANDBY" in self.status and self.idle() > timeout:
-            return "Timer triggered but disk already in standby mode"
-        elif "STANDBY" in self.status:
+            return "STANDBY_Z issued"
+        elif self.idle() > idle_c_timeout and "STANDBY" not in self.status and "IDLE_C" not in self.status and not self.sata and "ACTIVE" not in self.status:
+            data = subprocess.run(['sg_start', '-r', '-p2', '-m2', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+            return "IDLE_C Issued"
+        elif self.idle() > idle_b_timeout and "STANDBY" not in self.status and "IDLE_C" not in self.status and "IDLE_" not in self.status and not self.sata and "ACTIVE" not in self.status:
+            data = subprocess.run(['sg_start', '-r', '-p2', '-m1', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+            return "IDLE_B Issued"
+        elif self.idle() > idle_a_timeout and "ACTIVE" in self.status and not self.sata:
+            data = subprocess.run(['sg_start', '-r', '-p2', '-m0', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+            return "IDLE_A Issued"
+        elif "STANDBY" in self.status and self.idle() < standby_timeout:
             return "Disk in standby but timer not triggered"
+        elif "IDLE_C" in self.status and self.idle() < idle_c_timeout:
+            return "Disk in idle_c but timer not triggered"
+        elif "IDLE_B" in self.status and self.idle() < idle_b_timeout:
+            return "Disk in idle_b but timer not triggered"
+        elif "IDLE_A" in self.status and self.idle() < idle_a_timeout:
+            return "Disk in idle_a but timer not triggered"
         return "Disk in %s mode" % (self.status)
 
 

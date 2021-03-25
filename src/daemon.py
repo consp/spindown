@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from diskstats import Diskstats
 from datetime import timedelta
 from glob import glob
@@ -15,6 +15,7 @@ def sigint_handler(sig, frame):
     print("Exiting ...")
     if diskstats is not None:
         diskstats.save()
+    exit(0)
 
 
 if __name__ == "__main__":
@@ -38,12 +39,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     diskstats = Diskstats(filename=args.filename, disks=disknames, verbose=args.verbose)
+    signal.signal(signal.SIGINT, sigint_handler)
 
     # start loop, check every n seconds
     while True and args.daemon:
         diskstats.update() # update timers
         diskstats.check_power() # check for sleepy mode
-        stb = diskstats.set_standby(timeout=timedelta(minutes=args.timeout))
+        stb = diskstats.set_standby(standby_timeout=timedelta(minutes=args.timeout))
         if args.verbose:
             print("Disk Time idle       Last check")
             print(diskstats)
