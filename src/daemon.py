@@ -21,7 +21,7 @@ def sigint_handler(sig, frame):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="daemon for running a sleeper tool to actually sleep the disks")
-    parser.add_argument("--timeout", "-t", help="Time in minutes before timeout occurs and disks go to sleep (s)", default=25)
+    parser.add_argument("--timeout", "-t", help="Time in minutes before timeout occurs and disks go to sleep (s)", default=60)
     parser.add_argument("--interval", "-i", help="Polling interval (s)", default=10)
     parser.add_argument("--filename", "-f", help="Filename to store temporary data, usefull if something crashes and you autorestart and do not want to lose the timeout time", default="data.json")
     parser.add_argument("--daemon", "-d", help="Make yourself angry and persistent", default=False, action="store_true")

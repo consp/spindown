@@ -67,7 +67,7 @@ class Diskstats:
         for name, disk in self.disks.items():
             disk.powerstatus()
 
-    def set_standby(self, standby_timeout=timedelta(minutes=25)):
+    def set_standby(self, standby_timeout=timedelta(minutes=60)):
         s = "Setting disks in standby:\n"
         for name, disk in self.disks.items():
             r = disk.standby(standby_timeout=standby_timeout)
@@ -112,6 +112,7 @@ class Disk:
     status = "UNKNOWN"
     sata = False
     sas = False
+    staged = False
 
     def __init__(self, name, timestamp=None, current_reads_completed=0, current_writes_completed=0):  # noqa
         # name is the drivename, data is the raw input from diskstats
@@ -124,6 +125,7 @@ class Disk:
         self.sata = False
         self.check_protocol()
         self.update()
+        self.staged = False
 
     def update(self):
         with open('/proc/diskstats', 'r') as f:
@@ -138,9 +140,9 @@ class Disk:
                     for i in range(0, len(data)):
                         setattr(self, self.fields[i], int(data[i]))
 
-                    if self.reads_completed > self.current_reads_completed:
+                    if self.reads_completed > self.current_reads_completed or self.ios_in_progress != 0:
                         self.time_last_check = datetime.utcnow()
-                    if self.writes_completed > self.current_writes_completed:
+                    if self.writes_completed > self.current_writes_completed or self.ios_in_progress != 0:
                         self.time_last_check = datetime.utcnow()
 
                     self.current_reads_completed = self.reads_completed
@@ -187,29 +189,49 @@ class Disk:
             self.status = "UNKNOWN"
         return self.status
 
-    def standby(self, standby_timeout=timedelta(minutes=25), idle_c_timeout=timedelta(minutes=8), idle_b_timeout=timedelta(minutes=3), idle_a_timeout=timedelta(seconds=10)):
+    def standby(self, standby_timeout=timedelta(minutes=60), idle_c_timeout=timedelta(minutes=30), idle_b_timeout=timedelta(minutes=10), idle_a_timeout=timedelta(seconds=60)):
         # sas is STANDBY xxxxxxxxxx (by command/timer)
         # sata is STANDBY
         # IDLE_b can be use to force, idle usually works. Idle_c == standby_y in my case
         if self.idle() > standby_timeout and "STANDBY" not in self.status:
-            data = subprocess.run(['smartctl', '-s', 'standby,now', '/dev/%s' % self.name], stdout=subprocess.PIPE).stdout
-            return "STANDBY_Z issued"
+            if self.staged:
+                data = subprocess.run(['smartctl', '-s', 'standby,now', '/dev/%s' % self.name], stdout=subprocess.PIPE).stdout
+                self.staged = False
+                return "STANDBY_Z issued"
+            else:
+                self.staged = True
+                return "STANDBY_Z Staged"
         elif self.idle() > idle_c_timeout and "STANDBY" not in self.status and "IDLE_C" not in self.status and not self.sata and "ACTIVE" not in self.status:
-            data = subprocess.run(['sg_start', '-r', '-p2', '-m2', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
-            return "IDLE_C Issued"
+            if self.staged:
+                data = subprocess.run(['sg_start', '-r', '-p2', '-m2', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+                self.staged = False
+                return "IDLE_C Issued"
+            else:
+                self.staged = True
+                return "IDLE_C Staged"
         elif self.idle() > idle_b_timeout and "STANDBY" not in self.status and "IDLE_C" not in self.status and "IDLE_" not in self.status and not self.sata and "ACTIVE" not in self.status:
-            data = subprocess.run(['sg_start', '-r', '-p2', '-m1', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
-            return "IDLE_B Issued"
+            if self.staged:
+                data = subprocess.run(['sg_start', '-r', '-p2', '-m1', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+                self.staged = False
+                return "IDLE_B Issued"
+            else:
+                self.staged = True
+                return "IDLE_B Staged"
         elif self.idle() > idle_a_timeout and "ACTIVE" in self.status and not self.sata:
-            data = subprocess.run(['sg_start', '-r', '-p2', '-m0', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
-            return "IDLE_A Issued"
+            if self.staged:
+                data = subprocess.run(['sg_start', '-r', '-p2', '-m0', '/dev/%s' % self.name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+                self.staged = False
+                return "IDLE_A Issued"
+            else:
+                self.staged = True
+                return "IDLE_A Staged"
         elif "STANDBY" in self.status and self.idle() < standby_timeout:
             return "Disk in standby but timer not triggered"
         elif "IDLE_C" in self.status and self.idle() < idle_c_timeout:
             return "Disk in idle_c but timer not triggered"
-        elif "IDLE_B" in self.status and self.idle() < idle_b_timeout:
+        elif "IDLE_" in self.status and self.idle() < idle_b_timeout:
             return "Disk in idle_b but timer not triggered"
-        elif "IDLE_A" in self.status and self.idle() < idle_a_timeout:
+        elif "IDLE" in self.status and self.idle() < idle_a_timeout and "ACTIVE" not in self.status:
             return "Disk in idle_a but timer not triggered"
         return "Disk in %s mode" % (self.status)
 
