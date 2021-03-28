@@ -30,11 +30,11 @@ if __name__ == "__main__":
     # fetch all sdN from /dev
     disknames = [n.split("/")[-1] for n in glob("/dev/sd?")]
 
-    # check smartctl version 7.2 and up. SAS spindown is included in this version
-    smartctl = subprocess.run(['smartctl', '--version'], stdout=subprocess.PIPE).stdout.decode()
-    if smartctl.split(" ")[1] < "7.2":
-        print("Version 7.2 of smartctl or higher is required")
-        exit(1)
+    # no longer needed
+    # smartctl = subprocess.run(['smartctl', '--version'], stdout=subprocess.PIPE).stdout.decode()
+    # if smartctl.split(" ")[1] < "7.2":
+    #    print("Version 7.2 of smartctl or higher is required")
+    #    exit(1)
 
     args = parser.parse_args()
 
